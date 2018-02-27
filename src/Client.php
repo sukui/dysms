@@ -3,6 +3,8 @@ namespace Flc\Dysms;
 
 use Flc\Dysms\Request\IRequest;
 use Flc\Dysms\Helper;
+use ZanPHP\Config\Config;
+use ZanPHP\HttpClient\HttpClient;
 
 /**
  * dysms客户端类
@@ -42,18 +44,58 @@ class Client
     protected $config = [];
 
     /**
+     * @var static
+     */
+    private static $_instance = null;
+
+    /**
+     * @param array $config
+     * @return static
+     */
+    final public static function instance($config=[])
+    {
+        return static::singleton($config);
+    }
+
+    final public static function singleton($config=[])
+    {
+        if (null === static::$_instance) {
+            static::$_instance = new static($config);
+        }
+        return static::$_instance;
+    }
+
+    /**
+     * @param $config
+     * @return static
+     */
+    final public static function getInstance($config=[])
+    {
+        return static::singleton($config);
+    }
+
+    final public static function swap($instance)
+    {
+        static::$_instance = $instance;
+    }
+
+    /**
      * 初始化
      * @param array $config [description]
      */
     public function __construct($config = [])
     {
+        if(empty($config)){
+            $config = Config::get('sms');
+        }
         $this->config = $config;
     }
 
     /**
      * 请求
      * @param  IRequest $request [description]
-     * @return [type]            [description]
+     * @return \Generator [type]            [description]
+     * @throws \Exception
      */
     public function execute(IRequest $request)
     {
@@ -67,17 +109,31 @@ class Client
             $reqParams
         );
 
-
         // 签名
         $params['Signature'] = $this->generateSign($params);
 
         // 请求数据
-        $resp = $this->curl(
+        $resp =yield $this->curl(
             $this->api_uri,
             $params
         );
 
-        return json_decode($resp);
+        $resp = json_decode($resp,true);
+
+        if(empty($resp['error_response'])){
+            yield true;
+        }else{
+            $errorMsg = $resp['error_response']['msg'];
+
+            if(!empty($resp['error_response']['sub_code'])){
+                $errorMsg .= '-'.$resp['error_response']['sub_code'];
+            }
+
+            if(!empty($resp['error_response']['sub_msg'])){
+                $errorMsg .= '-'.$resp['error_response']['sub_msg'];
+            }
+            throw new \Exception($errorMsg,$resp['error_response']['code']);
+        }
     }
 
     /**
@@ -139,43 +195,20 @@ class Client
      */
     protected function getTimestamp()
     {
-        $timezone = date_default_timezone_get();
-        date_default_timezone_set('GMT');
-        $timestamp = date('Y-m-d\TH:i:s\Z');
-        date_default_timezone_set($timezone);
-
-        return $timestamp;
+        $date = new \DateTime('now',new \DateTimeZone('GMT'));
+        return $date->format('Y-m-d\TH:i:s\Z');
     }
 
     /**
      * curl请求
-     * @param  string $url        string
+     * @param  string $url string
      * @param  array|null $postFields 请求参数
-     * @return [type]             [description]
+     * @return \Generator [type]             [description]
      */
     protected function curl($url, $postFields = null)
     {
-        $ch = curl_init();
-        curl_setopt($ch, CURLOPT_URL, $url);
-        curl_setopt($ch, CURLOPT_FAILONERROR, false);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        //https 请求
-        if(strlen($url) > 5 && strtolower(substr($url,0,5)) == "https" ) {
-            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-            curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
-        }
-        if (is_array($postFields) && 0 < count($postFields)) {
-            $postBodyString = "";
-            foreach ($postFields as $k => $v) {
-                $postBodyString .= "$k=" . urlencode($v) . "&"; 
-            }
-            unset($k, $v);
-            curl_setopt($ch, CURLOPT_POST, true);
-            $header = array("content-type: application/x-www-form-urlencoded; charset=UTF-8");
-            curl_setopt($ch,CURLOPT_HTTPHEADER,$header);
-            curl_setopt($ch, CURLOPT_POSTFIELDS, substr($postBodyString,0,-1));
-        }
-        $reponse = curl_exec($ch);
-        return $reponse;
+        $httpClient = new HttpClient();
+        $response = yield $httpClient->postByURL($url,$postFields);
+        yield (intval($response->getStatusCode()) === 200) ? $response->getBody() : false;
     }
 }
