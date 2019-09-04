@@ -2,7 +2,6 @@
 namespace Flc\Dysms;
 
 use Flc\Dysms\Request\IRequest;
-use Flc\Dysms\Helper;
 use ZanPHP\Config\Config;
 use ZanPHP\HttpClient\HttpClient;
 
@@ -113,26 +112,24 @@ class Client
         $params['Signature'] = $this->generateSign($params);
 
         // 请求数据
-        $resp =yield $this->curl(
+        $resp = yield $this->curl(
             $this->api_uri,
             $params
         );
 
-        $resp = json_decode($resp,true);
+        $code = intval($resp->getStatusCode());
 
-        if(empty($resp['error_response'])){
-            yield true;
+        if($code === 200){
+            $content =   $resp->getBody();
+            $data = json_decode($content,true);
+            if($data['Code'] == 'OK'){
+                yield true;
+            }else{
+                $message = $this->getError($data['Code']);
+                throw new \Exception("{$message},{$data['Message']}");
+            }
         }else{
-            $errorMsg = $resp['error_response']['msg'];
-
-            if(!empty($resp['error_response']['sub_code'])){
-                $errorMsg .= '-'.$resp['error_response']['sub_code'];
-            }
-
-            if(!empty($resp['error_response']['sub_msg'])){
-                $errorMsg .= '-'.$resp['error_response']['sub_msg'];
-            }
-            throw new \Exception($errorMsg,$resp['error_response']['code']);
+            throw new \Exception("网关请求错误，code:{$code}",$code);
         }
     }
 
@@ -208,7 +205,77 @@ class Client
     protected function curl($url, $postFields = null)
     {
         $httpClient = new HttpClient();
-        $response = yield $httpClient->postByURL($url,$postFields);
-        yield (intval($response->getStatusCode()) === 200) ? $response->getBody() : false;
+        yield $httpClient->postByURL($url,$postFields);
+    }
+
+    /**
+     * 获取错误信息
+     * @param $error_code
+     * @return string
+     */
+    protected function getError($error_code){
+        $message = "未知错误";
+        switch ($error_code){
+            case 'isv.OUT_OF_SERVICE':
+                $message = "业务停机";
+                break;
+            case 'isv.PRODUCT_UNSUBSCRIBE':
+                $message = "产品服务未开通";
+                break;
+            case 'isv.ACCOUNT_NOT_EXISTS':
+                $message = "账户信息不存在";
+                break;
+            case 'isv.ACCOUNT_ABNORMAL':
+                $message = "账户信息异常";
+                break;
+            case 'isv.SMS_TEMPLATE_ILLEGAL':
+                $message = "短信模板不合法";
+                break;
+            case 'isv.SMS_SIGNATURE_ILLEGAL':
+                $message = "短信签名不合法";
+                break;
+            case 'isv.MOBILE_NUMBER_ILLEGAL':
+                $message = "手机号码格式错误";
+                break;
+            case 'isv.MOBILE_COUNT_OVER_LIMIT':
+                $message = "手机号码数量超过限制";
+                break;
+            case 'isv.TEMPLATE_MISSING_PARAMETERS':
+                $message = "短信模板变量缺少参数";
+                break;
+            case 'isv.INVALID_PARAMETERS':
+                $message = "参数异常";
+                break;
+            case 'isv.BUSINESS_LIMIT_CONTROL':
+                $message = "发送短信过于频繁限制发送";
+                break;
+            case 'isv.INVALID_JSON_PARAM':
+                $message = "JSON参数不合法";
+                break;
+            case 'isv.BLACK_KEY_CONTROL_LIMIT':
+                $message = "触发关键字黑名单";
+                break;
+            case 'isv.PARAM_NOT_SUPPORT_URL':
+                $message = "不支持url为变量";
+                break;
+            case 'isv.PARAM_LENGTH_LIMIT':
+                $message = "变量长度受限";
+                break;
+            case 'isv.AMOUNT_NOT_ENOUGH':
+                $message = "短信账户余额不足";
+                break;
+            case 'isv.DAY_LIMIT_CONTROL':
+                $message = "触发日发送限额";
+                break;
+            case 'isv.MONTH_LIMIT_CONTROL':
+                $message = "触发月发送限额";
+                break;
+            case 'isv.SMS_SIGN_ILLEGAL':
+                $message = "短信签名非法";
+                break;
+            default:
+
+        }
+        return $message;
     }
 }
